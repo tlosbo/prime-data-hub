@@ -165,11 +165,11 @@ class ObservationMessageTests {
 
             if (result.errors.isNotEmpty()) {
                 println("HL7 file $filename has ${result.errors.size} HL7 decoding errors:")
-                result.errors.forEach { println("   SCHEMA ERROR: ${it.details}") }
+                result.errors.forEach { println("   SCHEMA ERROR: ${it.message.detailMsg()}") }
             }
             if (result.warnings.isNotEmpty()) {
                 println("HL7 file $filename has ${result.warnings.size} HL7 decoding warnings:")
-                result.warnings.forEach { println("   SCHEMA WARNING: ${it.details}") }
+                result.warnings.forEach { println("   SCHEMA WARNING: ${it.message.detailMsg()}") }
             }
             assertTrue(result.errors.isEmpty(), "There were data errors in the HL7 file.")
             return result.report!!

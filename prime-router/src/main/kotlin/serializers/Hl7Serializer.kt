@@ -11,16 +11,7 @@ import ca.uhn.hl7v2.model.v251.message.ORU_R01
 import ca.uhn.hl7v2.parser.CanonicalModelClassFactory
 import ca.uhn.hl7v2.parser.ModelClassFactory
 import ca.uhn.hl7v2.util.Terser
-import gov.cdc.prime.router.Element
-import gov.cdc.prime.router.ElementAndValue
-import gov.cdc.prime.router.Hl7Configuration
-import gov.cdc.prime.router.Mapper
-import gov.cdc.prime.router.Metadata
-import gov.cdc.prime.router.Report
-import gov.cdc.prime.router.ResultDetail
-import gov.cdc.prime.router.Schema
-import gov.cdc.prime.router.Source
-import gov.cdc.prime.router.ValueSet
+import gov.cdc.prime.router.*
 import org.apache.logging.log4j.kotlin.Logging
 import java.io.InputStream
 import java.io.OutputStream
@@ -340,8 +331,8 @@ class Hl7Serializer(val metadata: Metadata) : Logging {
         val schema = metadata.findSchema(schemaName) ?: error("Schema name $schemaName not found")
         val mapping = convertBatchMessagesToMap(messageBody, schema)
         val mappedRows = mapping.mappedRows
-        errors.addAll(mapping.errors.map { ResultDetail(ResultDetail.DetailScope.ITEM, "", it) })
-        warnings.addAll(mapping.warnings.map { ResultDetail(ResultDetail.DetailScope.ITEM, "", it) })
+        errors.addAll(mapping.errors.map { ResultDetail.item("", GenericMessage(ResponseMsgType.ELEMENT, it)) })
+        warnings.addAll(mapping.warnings.map { ResultDetail.item("",GenericMessage(ResponseMsgType.ELEMENT, it)) })
         mappedRows.forEach {
             logger.debug("${it.key} -> ${it.value.joinToString()}")
         }

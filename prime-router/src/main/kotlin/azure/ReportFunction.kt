@@ -12,8 +12,10 @@ import com.microsoft.azure.functions.annotation.FunctionName
 import com.microsoft.azure.functions.annotation.HttpTrigger
 import com.microsoft.azure.functions.annotation.StorageAccount
 import gov.cdc.prime.router.ClientSource
+import gov.cdc.prime.router.GenericMessage
 import gov.cdc.prime.router.Receiver
 import gov.cdc.prime.router.Report
+import gov.cdc.prime.router.ResponseMsgType
 import gov.cdc.prime.router.ResultDetail
 import gov.cdc.prime.router.Sender
 import gov.cdc.prime.router.azure.db.enums.TaskAction
@@ -125,7 +127,10 @@ class ReportFunction {
             try {
                 Options.valueOf(optionsText)
             } catch (e: IllegalArgumentException) {
-                errors.add(ResultDetail.param(OPTION_PARAMETER, "'$optionsText' is not valid"))
+                errors.add(ResultDetail.param(
+                    OPTION_PARAMETER,
+                    GenericMessage(ResponseMsgType.OPTION,"'$optionsText' is not valid")
+                ))
                 Options.None
             }
         } else {
@@ -140,27 +145,30 @@ class ReportFunction {
         val routeTo = if (receiverNamesText.isNotBlank()) receiverNamesText.split(ROUTE_TO_SEPARATOR) else emptyList()
         val receiverNameErrors = routeTo
             .filter { engine.settings.findReceiver(it) == null }
-            .map { ResultDetail.param(ROUTE_TO_PARAMETER, "Invalid receiver name: $it") }
+            .map { ResultDetail.param(
+                ROUTE_TO_PARAMETER,
+                GenericMessage(ResponseMsgType.REPORT,"Invalid receiver name: $it")
+            )}
         errors.addAll(receiverNameErrors)
 
         val clientName = request.headers[CLIENT_PARAMETER] ?: request.queryParameters.getOrDefault(CLIENT_PARAMETER, "")
         if (clientName.isBlank())
-            errors.add(ResultDetail.param(CLIENT_PARAMETER, "Expected a '$CLIENT_PARAMETER' query parameter"))
+            errors.add(ResultDetail.param(CLIENT_PARAMETER, GenericMessage(ResponseMsgType.REPORT,"Expected a '$CLIENT_PARAMETER' query parameter")))
         val sender = engine.settings.findSender(clientName)
         if (sender == null)
-            errors.add(ResultDetail.param(CLIENT_PARAMETER, "'$CLIENT_PARAMETER:$clientName': unknown sender"))
+            errors.add(ResultDetail.param(CLIENT_PARAMETER, GenericMessage(ResponseMsgType.REPORT,"'$CLIENT_PARAMETER:$clientName': unknown sender")))
         val schema = engine.metadata.findSchema(sender?.schemaName ?: "")
 
         val contentType = request.headers.getOrDefault(HttpHeaders.CONTENT_TYPE.lowercase(), "")
         if (contentType.isBlank()) {
-            errors.add(ResultDetail.param(HttpHeaders.CONTENT_TYPE, "missing"))
+            errors.add(ResultDetail.param(HttpHeaders.CONTENT_TYPE, GenericMessage(ResponseMsgType.REPORT,"missing")))
         } else if (sender != null && sender.format.mimeType != contentType) {
-            errors.add(ResultDetail.param(HttpHeaders.CONTENT_TYPE, "expecting '${sender.format.mimeType}'"))
+            errors.add(ResultDetail.param(HttpHeaders.CONTENT_TYPE, GenericMessage(ResponseMsgType.REPORT,"expecting '${sender.format.mimeType}'")))
         }
 
         val content = request.body ?: ""
         if (content.isEmpty()) {
-            errors.add(ResultDetail.param("Content", "expecting a post message with content"))
+            errors.add(ResultDetail.param("Content", GenericMessage(ResponseMsgType.REPORT,"expecting a post message with content")))
         }
 
         if (sender == null || schema == null || content.isEmpty() || errors.isNotEmpty()) {
@@ -172,17 +180,17 @@ class ReportFunction {
             values.mapNotNull {
                 val parts = it.split(DEFAULT_SEPARATOR)
                 if (parts.size != 2) {
-                    errors.add(ResultDetail.report("'$it' is not a valid default"))
+                    errors.add(ResultDetail.report(GenericMessage(ResponseMsgType.REPORT, "'$it' is not a valid default")))
                     return@mapNotNull null
                 }
                 val element = schema.findElement(parts[0])
                 if (element == null) {
-                    errors.add(ResultDetail.report("'${parts[0]}' is not a valid element name"))
+                    errors.add(ResultDetail.report(GenericMessage(ResponseMsgType.REPORT,"'${parts[0]}' is not a valid element name")))
                     return@mapNotNull null
                 }
                 val error = element.checkForError(parts[1])
                 if (error != null) {
-                    errors.add(ResultDetail.param(DEFAULT_PARAMETER, error))
+                    errors.add(ResultDetail.param(DEFAULT_PARAMETER, GenericMessage(ResponseMsgType.REPORT, error)))
                     return@mapNotNull null
                 }
                 Pair(parts[0], parts[1])
@@ -351,7 +359,7 @@ class ReportFunction {
                     it.writeStartObject()
                     it.writeStringField("scope", error.scope.toString())
                     it.writeStringField("id", error.id)
-                    it.writeStringField("details", error.details)
+                    it.writeStringField("details", error.message.detailMsg())
                     it.writeEndObject()
                 }
                 it.writeEndArray()

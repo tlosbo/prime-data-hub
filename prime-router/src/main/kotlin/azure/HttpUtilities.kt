@@ -4,6 +4,8 @@ import com.google.common.net.HttpHeaders
 import com.microsoft.azure.functions.HttpRequestMessage
 import com.microsoft.azure.functions.HttpResponseMessage
 import com.microsoft.azure.functions.HttpStatus
+import gov.cdc.prime.router.ResponseMessage
+import gov.cdc.prime.router.PayloadMessage
 import gov.cdc.prime.router.PAYLOAD_MAX_BYTES
 import java.io.File
 import java.io.IOException
@@ -120,31 +122,28 @@ class HttpUtilities {
          * Do a variety of checks on payload size.
          * Returns a Pair (http error code, human readable error message)
          */
-        fun payloadSizeCheck(request: HttpRequestMessage<String?>): Pair<HttpStatus, String> {
+        fun payloadSizeCheck(request: HttpRequestMessage<String?>): Pair<HttpStatus, ResponseMessage> {
             val contentLengthStr = request.headers["content-length"]
-                ?: return HttpStatus.LENGTH_REQUIRED to "ERROR: No content-length header found.  Refusing this request."
+                ?: return HttpStatus.LENGTH_REQUIRED to PayloadMessage.noHeader()
             val contentLength = try {
                 contentLengthStr.toLong()
             } catch (e: NumberFormatException) {
-                return HttpStatus.LENGTH_REQUIRED to "ERROR: content-length header is not a number"
+                return HttpStatus.LENGTH_REQUIRED to PayloadMessage.nonNumeric()
             }
             when {
                 contentLength < 0 -> {
-                    return HttpStatus.LENGTH_REQUIRED to "ERROR: negative content-length $contentLength"
+                    return HttpStatus.LENGTH_REQUIRED to PayloadMessage.negative(contentLength)
                 }
                 contentLength > PAYLOAD_MAX_BYTES -> {
-                    return HttpStatus.PAYLOAD_TOO_LARGE to
-                        "ERROR: content-length $contentLength is larger than max $PAYLOAD_MAX_BYTES"
+                    return HttpStatus.PAYLOAD_TOO_LARGE to PayloadMessage.headerTooLarge(contentLength)
                 }
             }
             // content-length header is ok.  Now check size of actual body as well
             val content = request.body
             if (content != null && content.length > PAYLOAD_MAX_BYTES) {
-                return HttpStatus.PAYLOAD_TOO_LARGE to
-                    "ERROR: body size ${content.length} is larger than max $PAYLOAD_MAX_BYTES " +
-                    "(content-length header = $contentLength"
+                return HttpStatus.PAYLOAD_TOO_LARGE to PayloadMessage.bodyTooLarge(contentLength, content.length)
             }
-            return HttpStatus.OK to ""
+            return HttpStatus.OK to PayloadMessage()
         }
 
         /**

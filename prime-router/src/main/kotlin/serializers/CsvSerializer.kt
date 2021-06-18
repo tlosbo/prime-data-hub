@@ -5,19 +5,7 @@ import com.github.doyaaaaaken.kotlincsv.dsl.csvWriter
 import com.github.doyaaaaaken.kotlincsv.util.CSVFieldNumDifferentException
 import com.github.doyaaaaaken.kotlincsv.util.CSVParseFormatException
 import com.github.doyaaaaaken.kotlincsv.util.MalformedCSVException
-import gov.cdc.prime.router.Element
-import gov.cdc.prime.router.ElementAndValue
-import gov.cdc.prime.router.Mapper
-import gov.cdc.prime.router.Metadata
-import gov.cdc.prime.router.REPORT_MAX_ERRORS
-import gov.cdc.prime.router.REPORT_MAX_ITEMS
-import gov.cdc.prime.router.REPORT_MAX_ITEM_COLUMNS
-import gov.cdc.prime.router.Receiver
-import gov.cdc.prime.router.Report
-import gov.cdc.prime.router.ReportId
-import gov.cdc.prime.router.ResultDetail
-import gov.cdc.prime.router.Schema
-import gov.cdc.prime.router.Source
+import gov.cdc.prime.router.*
 import java.io.InputStream
 import java.io.OutputStream
 
@@ -37,14 +25,14 @@ class CsvSerializer(val metadata: Metadata) {
         val useCsv: Map<String, List<Element.CsvField>>,
         val useMapper: Map<String, Pair<Mapper, List<String>>>,
         val useDefault: Map<String, String>,
-        val errors: List<String>,
-        val warnings: List<String>,
+        val errors: List<ResponseMessage>,
+        val warnings: List<ResponseMessage>,
     )
 
     private data class RowResult(
         val row: List<String>,
-        val errors: List<String>,
-        val warnings: List<String>,
+        val errors: List<ResponseMessage>,
+        val warnings: List<ResponseMessage>,
     )
 
     fun readExternal(schemaName: String, input: InputStream, source: Source): ReadResult {
@@ -73,29 +61,44 @@ class CsvSerializer(val metadata: Metadata) {
                     rows.add(row)
                     if (rows.size > REPORT_MAX_ITEMS) {
                         errors.add(ResultDetail.report(
+                            GenericMessage(
+                                ResponseMsgType.REPORT,
                                 "Report rows ${rows.size} exceeds max allowed $REPORT_MAX_ITEMS rows"
-                            ))
+                            )
+                        ))
                         return@open
                     }
                     if (row.size > REPORT_MAX_ITEM_COLUMNS) {
                         errors.add(ResultDetail.report(
+                            GenericMessage(
+                                ResponseMsgType.REPORT,
                                 "Number of report columns ${row.size} exceeds max allowed $REPORT_MAX_ITEM_COLUMNS"
-                            ))
+                            )
+                        ))
                         return@open
                     }
                 }
             } catch (ex: CSVFieldNumDifferentException) {
-                errors.add(
-                    ResultDetail.report("CSV file has an inconsistent number of columns on row: ${ex.csvRowNum}")
-                )
+                errors.add(ResultDetail.report(
+                    GenericMessage(
+                        ResponseMsgType.REPORT,
+                        "CSV file has an inconsistent number of columns on row: ${ex.csvRowNum}"
+                    )
+                ))
             } catch (ex: CSVParseFormatException) {
-                errors.add(
-                    ResultDetail.report("General CSV parsing error on row: ${ex.rowNum}")
-                )
+                errors.add(ResultDetail.report(
+                    GenericMessage(
+                        ResponseMsgType.REPORT,
+                        "General CSV parsing error on row: ${ex.rowNum}"
+                    )
+                ))
             } catch (ex: MalformedCSVException) {
-                errors.add(
-                    ResultDetail.report("General CSV parsing error: ${ex.message}")
-                )
+                errors.add(ResultDetail.report(
+                    GenericMessage(
+                        ResponseMsgType.REPORT,
+                        "General CSV parsing error: ${ex.message}"
+                    )
+                ))
             }
         }
         if (errors.size > 0) {
@@ -110,11 +113,12 @@ class CsvSerializer(val metadata: Metadata) {
         errors.addAll(csvMapping.errors.map { ResultDetail.report(it) })
         warnings.addAll(csvMapping.warnings.map { ResultDetail.report(it) })
         if (errors.size > REPORT_MAX_ERRORS) {
-            errors.add(
-                ResultDetail.report(
+            errors.add(ResultDetail.report(
+                GenericMessage(
+                    ResponseMsgType.REPORT,
                     "Number of errors (${errors.size}) exceeded $REPORT_MAX_ERRORS.  Stopping further work."
                 )
-            )
+            ))
             return ReadResult(null, errors, warnings)
         }
         if (csvMapping.errors.isNotEmpty()) {
@@ -136,11 +140,12 @@ class CsvSerializer(val metadata: Metadata) {
             }
         }
         if (errors.size > REPORT_MAX_ERRORS) {
-            errors.add(
-                ResultDetail.report(
+            errors.add(ResultDetail.report(
+                GenericMessage(
+                    ResponseMsgType.REPORT,
                     "Number of errors (${errors.size}) exceeded $REPORT_MAX_ERRORS.  Stopping."
                 )
-            )
+            ))
             return ReadResult(null, errors, warnings)
         }
         return ReadResult(Report(schema, mappedRows, sources, destination, metadata = metadata), errors, warnings)
@@ -246,9 +251,17 @@ class CsvSerializer(val metadata: Metadata) {
         val missingRequiredHeaders = requiredHeaders - actualHeaders
         val missingOptionalHeaders = optionalHeaders - actualHeaders
         val ignoredHeaders = actualHeaders - requiredHeaders - optionalHeaders - headersWithDefault
-        val errors = missingRequiredHeaders.map { "Missing ${schema.findElementByCsvName(it)?.fieldMapping} header" }
-        val warnings = missingOptionalHeaders.map { "Missing ${schema.findElementByCsvName(it)?.fieldMapping} header" } +
-            ignoredHeaders.map { "Unexpected '$it' header is ignored" }
+        //val errors = mutableListOf<ResponseMessage>()
+        //forEach (header in missingRequiredHeaders) {
+        //    val fieldMapping: String = schema.findElementByCsvName(it)?.fieldMapping ?: ""
+        val errors = missingRequiredHeaders.map {
+            val fieldMapping: String? = schema.findElementByCsvName(it)?.fieldMapping
+            GenericMessage(ResponseMsgType.MISSING,"Missing $fieldMapping header", fieldMapping ?: "")
+        }
+        val warnings = missingOptionalHeaders.map {
+            val fieldMapping: String? = schema.findElementByCsvName(it)?.fieldMapping
+            GenericMessage(ResponseMsgType.MISSING,"Missing $fieldMapping header", fieldMapping ?: "")
+        } + ignoredHeaders.map { GenericMessage(ResponseMsgType.UNEXPECTED,"Unexpected '$it' header is ignored") }
 
         return CsvMapping(useCsv, useMapper, useDefault, errors, warnings)
     }
@@ -266,8 +279,10 @@ class CsvSerializer(val metadata: Metadata) {
      */
     private fun mapRow(schema: Schema, csvMapping: CsvMapping, inputRow: Map<String, String>): RowResult {
         val lookupValues = mutableMapOf<String, String>()
-        val errors = mutableListOf<String>()
-        val warnings = mutableListOf<String>()
+        //val errors = mutableListOf<String>()
+        val errors = mutableListOf<ResponseMessage>()
+        //val warnings = mutableListOf<String>()
+        val warnings = mutableListOf<ResponseMessage>()
         val placeholderValue = "**%%placeholder**"
         val failureValue = "**^^validationFail**"
 
@@ -284,17 +299,25 @@ class CsvSerializer(val metadata: Metadata) {
                 val error = element.checkForError(subValue.value, subValue.format)
                 if (error != null) {
                     when (element.cardinality) {
-                        Element.Cardinality.ONE -> errors += error
-                        Element.Cardinality.ZERO_OR_ONE -> warnings += error
-                        else -> warnings += "$error - setting value to ''"
+                        Element.Cardinality.ONE -> errors +=
+                            GenericMessage(ResponseMsgType.ELEMENT, error, element.fieldMapping)
+                        Element.Cardinality.ZERO_OR_ONE -> warnings +=
+                            GenericMessage(ResponseMsgType.ELEMENT, error, element.fieldMapping)
+                        else -> warnings +=
+                            GenericMessage(ResponseMsgType.ELEMENT,"$error - setting value to ''", element.fieldMapping)
                     }
                     return failureValue
                 }
             }
-            return if (subValues.size == 1) {
-                element.toNormalized(subValues[0].value, subValues[0].format)
-            } else {
-                element.toNormalized(subValues)
+            //ToDo: wrap in try catch and surface an Item message?
+            try {
+                return if (subValues.size == 1) {
+                    element.toNormalized(subValues[0].value, subValues[0].format)
+                } else {
+                    element.toNormalized(subValues)
+                }
+            } catch (e: Exception) {
+                error(GenericMessage(ResponseMsgType.ELEMENT, e.message ?: ""))
             }
         }
 
@@ -331,7 +354,8 @@ class CsvSerializer(val metadata: Metadata) {
             }
             if (value.isBlank() && !element.canBeBlank) {
                 when (element.cardinality) {
-                    Element.Cardinality.ONE -> errors += "Empty value for ${element.fieldMapping}"
+                    Element.Cardinality.ONE -> errors +=
+                        GenericMessage(ResponseMsgType.ELEMENT,"Empty value for ${element.fieldMapping}", element.fieldMapping)
                     Element.Cardinality.ZERO_OR_ONE -> {
                     }
                 }

@@ -1,5 +1,6 @@
 package gov.cdc.prime.router
 
+import com.sendgrid.Response
 import org.apache.logging.log4j.kotlin.Logging
 
 /**
@@ -55,7 +56,8 @@ class Translator(private val metadata: Metadata, private val settings: SettingsP
                     warnings.add(
                         ResultDetail(
                             ResultDetail.DetailScope.TRANSLATION,
-                            "TO:${receiver.fullName}:${receiver.schemaName}", e.localizedMessage
+                            "TO:${receiver.fullName}:${receiver.schemaName}",
+                            GenericMessage(ResponseMsgType.TRANSLATION,  e.localizedMessage)
                         )
                     )
                 }
